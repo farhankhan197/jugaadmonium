@@ -333,7 +333,7 @@ export default function HarmoniumApp() {
     
     await audioCtx.current.resume();
     
-    if (!sensorEnabled && typeof (DeviceOrientationEvent as any).requestPermission === "function") {
+    if (typeof (DeviceOrientationEvent as any).requestPermission === "function") {
       const permission = await (DeviceOrientationEvent as any).requestPermission();
       if (permission !== "granted") return;
     }
