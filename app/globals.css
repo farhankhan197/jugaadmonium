@@ -1,26 +1,46 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --md-sys-color-surface: #0d0d0d;
+  --md-sys-color-surface-variant: #1a1a1a;
+  --md-sys-color-on-surface: #e8e8e8;
+  --md-sys-color-on-surface-variant: #a0a0a0;
+  --md-sys-color-primary: #a8c8ff;
+  --md-sys-color-primary-container: #004a77;
+  --md-sys-color-on-primary-container: #d1e4ff;
+  --md-sys-color-secondary: #c9c8d6;
+  --md-sys-color-secondary-container: #444554;
+  --md-sys-color-on-secondary-container: #e6e5f0;
+  --md-sys-color-outline: #444444;
+  --md-sys-color-outline-variant: #242424;
+  --md-sys-elevation-1: 0 1px 3px 1px rgba(0,0,0,0.3), 0 1px 2px 0 rgba(0,0,0,0.3);
+  --md-sys-elevation-2: 0 4px 8px 3px rgba(0,0,0,0.3), 0 1px 4px 0 rgba(0,0,0,0.3);
+  --md-sys-elevation-3: 0 6px 10px 4px rgba(0,0,0,0.3), 0 2px 6px 0 rgba(0,0,0,0.3);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  -webkit-tap-highlight-color: transparent;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--md-sys-color-surface);
+  color: var(--md-sys-color-on-surface);
+  font-family: "Roboto Flex", "Roboto", system-ui, sans-serif;
+  overflow: hidden;
+  touch-action: none;
+}
+
+@theme inline {
+  --color-surface: var(--md-sys-color-surface);
+  --color-surface-variant: var(--md-sys-color-surface-variant);
+  --color-on-surface: var(--md-sys-color-on-surface);
+  --color-on-surface-variant: var(--md-sys-color-on-surface-variant);
+  --color-primary: var(--md-sys-color-primary);
+  --color-primary-container: var(--md-sys-color-primary-container);
+  --color-on-primary-container: var(--md-sys-color-on-primary-container);
+  --color-secondary: var(--md-sys-color-secondary);
+  --color-secondary-container: var(--md-sys-color-secondary-container);
+  --color-on-secondary-container: var(--md-sys-color-on-secondary-container);
+  --color-outline: var(--md-sys-color-outline);
+  --color-outline-variant: var(--md-sys-color-outline-variant);
 }
