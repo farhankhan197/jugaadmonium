@@ -582,7 +582,7 @@ export default function HarmoniumApp() {
               }`}
             >
               <span className={`w-1.5 h-1.5 rounded-full transition-all ${brightEnabled ? "bg-white" : "bg-white/30"}`} />
-              <span className="text-[10px] tracking-wider uppercase">Warm</span>
+              <span className="text-[10px] tracking-wider uppercase">Distortion</span>
             </button>
             <button
               onClick={() => {
