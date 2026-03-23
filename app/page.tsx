@@ -107,7 +107,7 @@ function ParticleSystem({ mousePos, distanceFromCenter }: ParticleProps) {
       }
 
       if (colorArray) {
-        let opacity = 0.5 - (currentDist - 0.9) * 0.7;
+        let opacity = 0.5 - (currentDist - 0.9  ) * 0.7;
         opacity = Math.max(0.01, Math.min(0.5, opacity));
         
         colorArray[idx] = baseColor.r * opacity;
@@ -248,6 +248,7 @@ export default function HarmoniumApp() {
   const distortionGain = useRef<GainNode | null>(null);
   const sensorDistanceRef = useRef(0);
   const pointerDistanceRef = useRef(0);
+  const isTouchingRef = useRef(false);
 
   useEffect(() => {
     const loadDefaultAudio = async () => {
@@ -265,7 +266,7 @@ export default function HarmoniumApp() {
     
     loadDefaultAudio();
     
-    if (hasOrientationSupport() && !isMobile()) {
+    if (hasOrientationSupport()) {
       setSensorEnabled(true);
     }
   }, []);
@@ -365,6 +366,8 @@ export default function HarmoniumApp() {
     sourceRef.current = source;
     
     window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerdown", handleTouchStart);
+    window.addEventListener("pointerup", handleTouchEnd);
     
     if (sensorEnabled) {
       window.addEventListener("deviceorientation", handleMotion);
@@ -403,50 +406,64 @@ export default function HarmoniumApp() {
     setData({ bright: Math.round(brightEnabledRef.current ? bright : 0), volume: Math.round(vol * 100) });
   }, []);
 
+  const handleTouchStart = useCallback(() => {
+    isTouchingRef.current = true;
+  }, []);
+
+  const handleTouchEnd = useCallback(() => {
+    isTouchingRef.current = false;
+  }, []);
+
   const handleMotion = useCallback((event: DeviceOrientationEvent) => {
-    if (!audioCtx.current || !sourceRef.current || !masterGain.current || !filterRef.current || !distortionRef.current || !distortionGain.current) return;
+    if (isTouchingRef.current) return;
+    if (!audioCtx.current || !masterGain.current || !filterRef.current || !distortionRef.current || !distortionGain.current) return;
 
     const beta = event.beta || 0;
+    const gamma = Math.abs(event.gamma || 0);
     
-    const betaOffset = Math.abs(beta);
-    const sensorDist = Math.min(1, betaOffset / 90);
-    sensorDistanceRef.current = sensorDist;
+    const bright = Math.min(100, Math.max(0, Math.abs(beta)));
+    const vol = Math.min(100, Math.max(0, gamma));
     
-    const combinedDist = Math.max(sensorDist, pointerDistanceRef.current);
-    setDistanceFromCenter(combinedDist);
-    
-    const isFlat = betaOffset < 15;
-    
-    if (isFlat && pointerDistanceRef.current === 0) {
-      masterGain.current.gain.setTargetAtTime(0.5, audioCtx.current.currentTime, 0.05);
+    if (brightEnabledRef.current) {
+      const filterFreq = 500 + bright * 20;
+      filterRef.current.frequency.setTargetAtTime(filterFreq, audioCtx.current.currentTime, 0.05);
+      filterRef.current.Q.setTargetAtTime(2 + (bright / 100) * 8, audioCtx.current.currentTime, 0.05);
+    } else {
       filterRef.current.frequency.setTargetAtTime(2000, audioCtx.current.currentTime, 0.05);
       filterRef.current.Q.setTargetAtTime(2, audioCtx.current.currentTime, 0.05);
-      setDistortionCurve(distortionRef.current, 0);
-      distortionGain.current.gain.setTargetAtTime(0, audioCtx.current.currentTime, 0.05);
-      setData({ bright: 0, volume: 50 });
-      return;
     }
-
-    applyCombinedDistance(combinedDist);
-  }, [applyCombinedDistance]);
+    
+    if (volumeEnabledRef.current) {
+      masterGain.current.gain.setTargetAtTime(vol / 100, audioCtx.current.currentTime, 0.05);
+    } else {
+      masterGain.current.gain.setTargetAtTime(0.5, audioCtx.current.currentTime, 0.05);
+    }
+    
+    const distortionAmount = bright * 0.3;
+    setDistortionCurve(distortionRef.current, distortionAmount);
+    distortionGain.current.gain.setTargetAtTime(0.3 * (bright / 100), audioCtx.current.currentTime, 0.05);
+    
+    setDistanceFromCenter(bright / 100);
+    setData({ bright: Math.round(brightEnabledRef.current ? bright : 0), volume: Math.round(volumeEnabledRef.current ? vol : 50) });
+  }, []);
 
   const handlePointerMove = useCallback((event: PointerEvent) => {
-    if (!audioCtx.current || !sourceRef.current || !masterGain.current || !filterRef.current || !distortionRef.current || !distortionGain.current) return;
+    if (!isTouchingRef.current) return;
+    if (!audioCtx.current || !masterGain.current || !filterRef.current || !distortionRef.current || !distortionGain.current) return;
     
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return;
     
-    const pointerDist = getDistanceFromCenter(event.clientX, event.clientY);
-    pointerDistanceRef.current = pointerDist;
+    const distance = getDistanceFromCenter(event.clientX, event.clientY);
+    setDistanceFromCenter(distance);
     
-    const combinedDist = Math.max(pointerDist, sensorDistanceRef.current);
-    setDistanceFromCenter(combinedDist);
-    
-    applyCombinedDistance(combinedDist);
+    applyCombinedDistance(distance);
   }, [getDistanceFromCenter, applyCombinedDistance]);
 
   const stopAudio = useCallback(() => {
     window.removeEventListener("pointermove", handlePointerMove);
+    window.removeEventListener("pointerdown", handleTouchStart);
+    window.removeEventListener("pointerup", handleTouchEnd);
     if (sensorEnabled) {
       window.removeEventListener("deviceorientation", handleMotion);
     }
@@ -463,6 +480,7 @@ export default function HarmoniumApp() {
     
     sensorDistanceRef.current = 0;
     pointerDistanceRef.current = 0;
+    isTouchingRef.current = false;
     
     setIsActive(false);
     setDistanceFromCenter(0);
@@ -472,6 +490,8 @@ export default function HarmoniumApp() {
   useEffect(() => {
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerdown", handleTouchStart);
+      window.removeEventListener("pointerup", handleTouchEnd);
       if (sensorEnabled) {
         window.removeEventListener("deviceorientation", handleMotion);
       }
