@@ -597,7 +597,7 @@ export default function HarmoniumApp() {
               }`}
             >
               <span className={`w-1.5 h-1.5 rounded-full transition-all ${volumeEnabled ? "bg-white" : "bg-white/30"}`} />
-              <span className="text-[10px] tracking-wider uppercase">Vol</span>
+              <span className="text-[10px] tracking-wider uppercase">Volume</span>
             </button>
           </div>
           <button
