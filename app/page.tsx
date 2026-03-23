@@ -226,9 +226,11 @@ function setDistortionCurve(node: WaveShaperNode, amount: number) {
 export default function HarmoniumApp() {
   const [isActive, setIsActive] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isStarting, setIsStarting] = useState(false);
   const [data, setData] = useState({ bright: 0, volume: 0 });
   const [audioLoaded, setAudioLoaded] = useState(false);
   const [sensorEnabled, setSensorEnabled] = useState(false);
+  const [sensorGranted, setSensorGranted] = useState(false);
   const [mousePos, setMousePos] = useState({ x: -1000, y: -1000 });
   const [distanceFromCenter, setDistanceFromCenter] = useState(0);
   const [brightEnabled, setBrightEnabled] = useState(true);
@@ -253,10 +255,11 @@ export default function HarmoniumApp() {
   useEffect(() => {
     const loadDefaultAudio = async () => {
       try {
-        audioCtx.current = new (window.AudioContext || (window as any).webkitAudioContext)();
         const response = await fetch(DEFAULT_AUDIO);
         const arrayBuffer = await response.arrayBuffer();
-        bufferRef.current = await audioCtx.current.decodeAudioData(arrayBuffer);
+        const tempCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        bufferRef.current = await tempCtx.decodeAudioData(arrayBuffer);
+        tempCtx.close();
         setAudioLoaded(true);
       } catch (err) {
         console.error("Failed to load default audio:", err);
@@ -326,19 +329,37 @@ export default function HarmoniumApp() {
   }, []);
 
   const startAudio = useCallback(async () => {
-    if (!audioCtx.current || audioCtxClosed.current) {
-      audioCtx.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-      audioCtxClosed.current = false;
+    setIsStarting(true);
+    
+    audioCtx.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+    audioCtxClosed.current = false;
+    
+    const resumePromise = audioCtx.current.resume();
+    const timeoutPromise = new Promise(resolve => setTimeout(resolve, 3000));
+    try {
+      await Promise.race([resumePromise, timeoutPromise]);
+    } catch (e) {
+      console.log("AudioContext resume issue:", e);
     }
     
-    await audioCtx.current.resume();
-    
+    let hasSensorAccess = false;
     if (typeof (DeviceOrientationEvent as any).requestPermission === "function") {
-      const permission = await (DeviceOrientationEvent as any).requestPermission();
-      if (permission !== "granted") return;
+      try {
+        const permission = await (DeviceOrientationEvent as any).requestPermission();
+        hasSensorAccess = permission === "granted";
+        setSensorGranted(hasSensorAccess);
+      } catch (e) {
+        console.log("Sensor permission error:", e);
+        hasSensorAccess = false;
+      }
+    } else {
+      hasSensorAccess = sensorEnabled;
     }
     
-    if (!bufferRef.current) return;
+    if (!bufferRef.current) {
+      setIsStarting(false);
+      return;
+    }
     
     masterGain.current = audioCtx.current.createGain();
     masterGain.current.gain.value = 0;
@@ -369,12 +390,13 @@ export default function HarmoniumApp() {
     window.addEventListener("pointerdown", handleTouchStart);
     window.addEventListener("pointerup", handleTouchEnd);
     
-    if (sensorEnabled) {
+    if (hasSensorAccess) {
       window.addEventListener("deviceorientation", handleMotion);
     }
     
     setData({ bright: 0, volume: 50 });
     setIsActive(true);
+    setIsStarting(false);
   }, [sensorEnabled]);
 
   const applyCombinedDistance = useCallback((distance: number) => {
@@ -464,9 +486,7 @@ export default function HarmoniumApp() {
     window.removeEventListener("pointermove", handlePointerMove);
     window.removeEventListener("pointerdown", handleTouchStart);
     window.removeEventListener("pointerup", handleTouchEnd);
-    if (sensorEnabled) {
-      window.removeEventListener("deviceorientation", handleMotion);
-    }
+    window.removeEventListener("deviceorientation", handleMotion);
     
     if (sourceRef.current) {
       sourceRef.current.stop();
@@ -485,23 +505,21 @@ export default function HarmoniumApp() {
     setIsActive(false);
     setDistanceFromCenter(0);
     setData({ bright: 0, volume: 0 });
-  }, [sensorEnabled, handlePointerMove, handleMotion]);
+  }, [handlePointerMove, handleMotion]);
 
   useEffect(() => {
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerdown", handleTouchStart);
       window.removeEventListener("pointerup", handleTouchEnd);
-      if (sensorEnabled) {
-        window.removeEventListener("deviceorientation", handleMotion);
-      }
+      window.removeEventListener("deviceorientation", handleMotion);
       if (sourceRef.current) sourceRef.current.stop();
       if (audioCtx.current && !audioCtxClosed.current) {
         audioCtx.current.close();
         audioCtxClosed.current = true;
       }
     };
-  }, [sensorEnabled, handlePointerMove, handleMotion]);
+  }, [handlePointerMove, handleMotion]);
 
   return (
     <main ref={containerRef} className="relative w-full h-screen min-h-[400px] overflow-hidden bg-[#0a0a0f]">
@@ -530,9 +548,10 @@ export default function HarmoniumApp() {
             {!isLoading && audioLoaded && (
               <button
                 onClick={startAudio}
-                className="pointer-events-auto px-8 sm:px-10 py-3 sm:py-4 bg-[#6b21a8] text-white rounded-full text-base sm:text-lg font-medium shadow-lg hover:shadow-xl active:scale-95 transition-all"
+                disabled={isStarting}
+                className="pointer-events-auto px-8 sm:px-10 py-3 sm:py-4 bg-[#6b21a8] text-white rounded-full text-base sm:text-lg font-medium shadow-lg hover:shadow-xl active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Start
+                {isStarting ? "Starting..." : "Start"}
               </button>
             )}
             
