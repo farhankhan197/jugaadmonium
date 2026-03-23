@@ -3,9 +3,6 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Ergosphere",
-  icons: {
-    icon: "/sound-waves.ico",
-  },
   description: "Tilt to play",
 };
 
