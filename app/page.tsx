@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { Canvas, useFrame } from "@react-three/fiber";
 import { Points, PointMaterial } from "@react-three/drei";
 import * as THREE from "three";
 
@@ -44,7 +44,6 @@ function ParticleSystem({ pitch, volume, active }: { pitch: number; volume: numb
       velocities[idx + 1] += (Math.random() - 0.5) * 0.01 * normalizedVolume;
       velocities[idx + 2] += (Math.random() - 0.5) * 0.01 * normalizedVolume;
       
-      const speed = 0.02 + normalizedVolume * 0.04;
       const noise = 0.01 + normalizedPitch * 0.02;
       
       velocities[idx] *= 0.98;
@@ -106,14 +105,97 @@ function ParticlesCanvas({ pitch, volume, active }: { pitch: number; volume: num
   );
 }
 
+interface HarmoniumVoice {
+  oscillators: OscillatorNode[];
+  gains: GainNode[];
+  filter: BiquadFilterNode;
+  lfo: OscillatorNode;
+  lfoGain: GainNode;
+  fm: OscillatorNode;
+  fmGain: GainNode;
+  masterGain: GainNode;
+}
+
+function createHarmoniumVoice(ctx: AudioContext, baseFreq: number): HarmoniumVoice {
+  const masterGain = ctx.createGain();
+  masterGain.gain.value = 0;
+
+  const filter = ctx.createBiquadFilter();
+  filter.type = "bandpass";
+  filter.frequency.value = 500;
+  filter.Q.value = 1.5;
+
+  const harmonics = [1, 2, 3, 4, 5, 6];
+  const harmonicGains = [0.5, 0.15, 0.35, 0.2, 0.25, 0.1];
+  
+  const oscillators: OscillatorNode[] = [];
+  const gains: GainNode[] = [];
+  
+  harmonics.forEach((harmonic, i) => {
+    for (let j = 0; j < 3; j++) {
+      const osc = ctx.createOscillator();
+      const oscGain = ctx.createGain();
+      
+      const detune = (j - 1) * 5;
+      osc.type = "sawtooth";
+      osc.frequency.value = baseFreq * harmonic;
+      osc.detune.value = detune;
+      
+      const volume = harmonicGains[i] / 3;
+      oscGain.gain.value = volume;
+      
+      osc.connect(oscGain);
+      oscGain.connect(filter);
+      osc.start();
+      
+      oscillators.push(osc);
+      gains.push(oscGain);
+    }
+  });
+
+  const lfo = ctx.createOscillator();
+  const lfoGain = ctx.createGain();
+  lfo.type = "sine";
+  lfo.frequency.value = 6;
+  lfoGain.gain.value = 0.15;
+  lfo.connect(lfoGain);
+  lfoGain.connect(masterGain.gain);
+  lfo.start();
+
+  const fm = ctx.createOscillator();
+  const fmGain = ctx.createGain();
+  fm.type = "sine";
+  fm.frequency.value = baseFreq * 2;
+  fmGain.gain.value = 8;
+  
+  const fmGain2 = ctx.createGain();
+  fmGain2.gain.value = 0;
+  fm.connect(fmGain);
+  fmGain.connect(fmGain2);
+  fmGain2.connect(filter.frequency);
+  fm.start();
+
+  filter.connect(masterGain);
+  masterGain.connect(ctx.destination);
+
+  return {
+    oscillators,
+    gains,
+    filter,
+    lfo,
+    lfoGain,
+    fm,
+    fmGain,
+    masterGain
+  };
+}
+
 export default function HarmoniumApp() {
   const [isActive, setIsActive] = useState(false);
   const [data, setData] = useState({ pitch: 0, volume: 0 });
   
   const audioCtx = useRef<AudioContext | null>(null);
-  const oscillator = useRef<OscillatorNode | null>(null);
-  const gainNode = useRef<GainNode | null>(null);
-  const filter = useRef<BiquadFilterNode | null>(null);
+  const voice = useRef<HarmoniumVoice | null>(null);
 
   const startAudio = useCallback(async () => {
     if (typeof (DeviceOrientationEvent as any).requestPermission === "function") {
@@ -122,43 +204,52 @@ export default function HarmoniumApp() {
     }
 
     audioCtx.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+    voice.current = createHarmoniumVoice(audioCtx.current, 220);
     
-    oscillator.current = audioCtx.current.createOscillator();
-    gainNode.current = audioCtx.current.createGain();
-    filter.current = audioCtx.current.createBiquadFilter();
-
-    oscillator.current.type = "sawtooth";
-    filter.current.type = "lowpass";
-    filter.current.frequency.value = 800;
-    gainNode.current.gain.value = 0;
-
-    oscillator.current.connect(filter.current);
-    filter.current.connect(gainNode.current);
-    gainNode.current.connect(audioCtx.current.destination);
-
-    oscillator.current.start();
     window.addEventListener("deviceorientation", handleMotion);
     setIsActive(true);
   }, []);
 
   const handleMotion = useCallback((event: DeviceOrientationEvent) => {
-    if (!oscillator.current || !gainNode.current || !audioCtx.current) return;
+    if (!voice.current || !audioCtx.current) return;
 
     const beta = event.beta || 0;
     const freq = Math.max(110, Math.min(880, 440 + (beta * 4)));
-    oscillator.current.frequency.setTargetAtTime(freq, audioCtx.current.currentTime, 0.05);
-    filter.current!.frequency.setTargetAtTime(400 + freq * 0.8, audioCtx.current.currentTime, 0.1);
+    
+    const harmonics = [1, 2, 3, 4, 5, 6];
+    const detuneOffsets = [-5, 0, 5];
+    
+    voice.current.oscillators.forEach((osc, idx) => {
+      const harmonicIdx = Math.floor(idx / 3);
+      const detuneIdx = idx % 3;
+      const harmonic = harmonics[harmonicIdx];
+      osc.frequency.setTargetAtTime(freq * harmonic, audioCtx.current!.currentTime, 0.02);
+      osc.detune.setTargetAtTime(detuneOffsets[detuneIdx], audioCtx.current!.currentTime, 0.02);
+    });
+    
+    voice.current.fm.frequency.setTargetAtTime(freq * 2, audioCtx.current.currentTime, 0.02);
+    
+    const filterFreq = 300 + (freq / 880) * 600;
+    voice.current.filter.frequency.setTargetAtTime(filterFreq, audioCtx.current.currentTime, 0.05);
 
     const gamma = Math.abs(event.gamma || 0);
     const vol = Math.min(1, gamma / 60);
-    gainNode.current.gain.setTargetAtTime(vol, audioCtx.current.currentTime, 0.05);
-
+    
+    voice.current.masterGain.gain.setTargetAtTime(vol * 0.3, audioCtx.current.currentTime, 0.05);
+    voice.current.lfo.frequency.setTargetAtTime(4 + vol * 8, audioCtx.current.currentTime, 0.1);
+    
     setData({ pitch: Math.round(freq), volume: Math.round(vol * 100) });
   }, []);
 
   const stopAudio = useCallback(() => {
     window.removeEventListener("deviceorientation", handleMotion);
-    oscillator.current?.stop();
+    
+    if (voice.current) {
+      voice.current.oscillators.forEach(osc => osc.stop());
+      voice.current.lfo.stop();
+      voice.current.fm.stop();
+    }
+    
     audioCtx.current?.close();
     setIsActive(false);
     setData({ pitch: 0, volume: 0 });
