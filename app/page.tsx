@@ -557,8 +557,8 @@ export default function HarmoniumApp() {
                 </button>
                 <p className="text-[#444] text-xs sm:text-sm mt-2 px-4">
                   {sensorEnabled 
-                    ? "Touch screen or tilt phone: center = clean • edges = warm" 
-                    : "Touch screen: center = clean • edges = warm"}
+                    ? "Touch screen or tilt phone to distort sound parameters" 
+                    : "Touch screen to distort sound parameters"}
                 </p>
               </>
             )}
