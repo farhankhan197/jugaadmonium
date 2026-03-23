@@ -228,7 +228,7 @@ export default function HarmoniumApp() {
   const [isLoading, setIsLoading] = useState(true);
   const [data, setData] = useState({ bright: 0, volume: 0 });
   const [audioLoaded, setAudioLoaded] = useState(false);
-  const [useMouse, setUseMouse] = useState(false);
+  const [sensorEnabled, setSensorEnabled] = useState(false);
   const [mousePos, setMousePos] = useState({ x: -1000, y: -1000 });
   const [distanceFromCenter, setDistanceFromCenter] = useState(0);
   const [brightEnabled, setBrightEnabled] = useState(true);
@@ -246,6 +246,8 @@ export default function HarmoniumApp() {
   const filterRef = useRef<BiquadFilterNode | null>(null);
   const distortionRef = useRef<WaveShaperNode | null>(null);
   const distortionGain = useRef<GainNode | null>(null);
+  const sensorDistanceRef = useRef(0);
+  const pointerDistanceRef = useRef(0);
 
   useEffect(() => {
     const loadDefaultAudio = async () => {
@@ -263,8 +265,8 @@ export default function HarmoniumApp() {
     
     loadDefaultAudio();
     
-    if (!hasOrientationSupport() || isMobile()) {
-      setUseMouse(true);
+    if (hasOrientationSupport() && !isMobile()) {
+      setSensorEnabled(true);
     }
   }, []);
 
@@ -330,7 +332,7 @@ export default function HarmoniumApp() {
     
     await audioCtx.current.resume();
     
-    if (!useMouse && typeof (DeviceOrientationEvent as any).requestPermission === "function") {
+    if (!sensorEnabled && typeof (DeviceOrientationEvent as any).requestPermission === "function") {
       const permission = await (DeviceOrientationEvent as any).requestPermission();
       if (permission !== "granted") return;
     }
@@ -362,37 +364,18 @@ export default function HarmoniumApp() {
     source.start();
     sourceRef.current = source;
     
-    if (useMouse) {
-      window.addEventListener("pointermove", handlePointerMove);
-    } else {
+    window.addEventListener("pointermove", handlePointerMove);
+    
+    if (sensorEnabled) {
       window.addEventListener("deviceorientation", handleMotion);
     }
     
     setData({ bright: 0, volume: 50 });
     setIsActive(true);
-  }, [useMouse]);
+  }, [sensorEnabled]);
 
-  const handleMotion = useCallback((event: DeviceOrientationEvent) => {
-    if (!audioCtx.current || !sourceRef.current || !masterGain.current || !filterRef.current || !distortionRef.current || !distortionGain.current) return;
-
-    const beta = event.beta || 0;
-    const gamma = event.gamma || 0;
-    
-    const betaOffset = Math.abs(beta);
-    const distance = Math.min(1, betaOffset / 90);
-    setDistanceFromCenter(distance);
-    
-    const isFlat = betaOffset < 15;
-    
-    if (isFlat) {
-      masterGain.current.gain.setTargetAtTime(0.5, audioCtx.current.currentTime, 0.05);
-      filterRef.current.frequency.setTargetAtTime(2000, audioCtx.current.currentTime, 0.05);
-      filterRef.current.Q.setTargetAtTime(2, audioCtx.current.currentTime, 0.05);
-      setDistortionCurve(distortionRef.current, 0);
-      distortionGain.current.gain.setTargetAtTime(0, audioCtx.current.currentTime, 0.05);
-      setData({ bright: 0, volume: 50 });
-      return;
-    }
+  const applyCombinedDistance = useCallback((distance: number) => {
+    if (!audioCtx.current || !masterGain.current || !filterRef.current || !distortionRef.current || !distortionGain.current) return;
 
     const bright = distance * 100;
     let vol = 0.5;
@@ -420,45 +403,51 @@ export default function HarmoniumApp() {
     setData({ bright: Math.round(brightEnabledRef.current ? bright : 0), volume: Math.round(vol * 100) });
   }, []);
 
+  const handleMotion = useCallback((event: DeviceOrientationEvent) => {
+    if (!audioCtx.current || !sourceRef.current || !masterGain.current || !filterRef.current || !distortionRef.current || !distortionGain.current) return;
+
+    const beta = event.beta || 0;
+    
+    const betaOffset = Math.abs(beta);
+    const sensorDist = Math.min(1, betaOffset / 90);
+    sensorDistanceRef.current = sensorDist;
+    
+    const combinedDist = Math.max(sensorDist, pointerDistanceRef.current);
+    setDistanceFromCenter(combinedDist);
+    
+    const isFlat = betaOffset < 15;
+    
+    if (isFlat && pointerDistanceRef.current === 0) {
+      masterGain.current.gain.setTargetAtTime(0.5, audioCtx.current.currentTime, 0.05);
+      filterRef.current.frequency.setTargetAtTime(2000, audioCtx.current.currentTime, 0.05);
+      filterRef.current.Q.setTargetAtTime(2, audioCtx.current.currentTime, 0.05);
+      setDistortionCurve(distortionRef.current, 0);
+      distortionGain.current.gain.setTargetAtTime(0, audioCtx.current.currentTime, 0.05);
+      setData({ bright: 0, volume: 50 });
+      return;
+    }
+
+    applyCombinedDistance(combinedDist);
+  }, [applyCombinedDistance]);
+
   const handlePointerMove = useCallback((event: PointerEvent) => {
     if (!audioCtx.current || !sourceRef.current || !masterGain.current || !filterRef.current || !distortionRef.current || !distortionGain.current) return;
     
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return;
     
-    const distance = getDistanceFromCenter(event.clientX, event.clientY);
-    setDistanceFromCenter(distance);
+    const pointerDist = getDistanceFromCenter(event.clientX, event.clientY);
+    pointerDistanceRef.current = pointerDist;
     
-    const bright = distance * 100;
-    let vol = 0.5;
+    const combinedDist = Math.max(pointerDist, sensorDistanceRef.current);
+    setDistanceFromCenter(combinedDist);
     
-    if (brightEnabledRef.current) {
-      const filterFreq = 500 + bright * 20;
-      filterRef.current.frequency.setTargetAtTime(filterFreq, audioCtx.current.currentTime, 0.05);
-      filterRef.current.Q.setTargetAtTime(2 + distance * 8, audioCtx.current.currentTime, 0.05);
-    } else {
-      filterRef.current.frequency.setTargetAtTime(2000, audioCtx.current.currentTime, 0.05);
-      filterRef.current.Q.setTargetAtTime(2, audioCtx.current.currentTime, 0.05);
-    }
-    
-    if (volumeEnabledRef.current) {
-      vol = 0.2 + distance * 0.8;
-      masterGain.current.gain.setTargetAtTime(vol, audioCtx.current.currentTime, 0.05);
-    } else {
-      masterGain.current.gain.setTargetAtTime(0.5, audioCtx.current.currentTime, 0.05);
-    }
-    
-    const distortionAmount = distance * 30;
-    setDistortionCurve(distortionRef.current, distortionAmount);
-    distortionGain.current.gain.setTargetAtTime(0.3 * distance, audioCtx.current.currentTime, 0.05);
-    
-    setData({ bright: Math.round(brightEnabledRef.current ? bright : 0), volume: Math.round(vol * 100) });
-  }, [getDistanceFromCenter]);
+    applyCombinedDistance(combinedDist);
+  }, [getDistanceFromCenter, applyCombinedDistance]);
 
   const stopAudio = useCallback(() => {
-    if (useMouse) {
-      window.removeEventListener("pointermove", handlePointerMove);
-    } else {
+    window.removeEventListener("pointermove", handlePointerMove);
+    if (sensorEnabled) {
       window.removeEventListener("deviceorientation", handleMotion);
     }
     
@@ -472,16 +461,18 @@ export default function HarmoniumApp() {
       audioCtxClosed.current = true;
     }
     
+    sensorDistanceRef.current = 0;
+    pointerDistanceRef.current = 0;
+    
     setIsActive(false);
     setDistanceFromCenter(0);
     setData({ bright: 0, volume: 0 });
-  }, [useMouse, handlePointerMove, handleMotion]);
+  }, [sensorEnabled, handlePointerMove, handleMotion]);
 
   useEffect(() => {
     return () => {
-      if (useMouse) {
-        window.removeEventListener("pointermove", handlePointerMove);
-      } else {
+      window.removeEventListener("pointermove", handlePointerMove);
+      if (sensorEnabled) {
         window.removeEventListener("deviceorientation", handleMotion);
       }
       if (sourceRef.current) sourceRef.current.stop();
@@ -490,7 +481,7 @@ export default function HarmoniumApp() {
         audioCtxClosed.current = true;
       }
     };
-  }, [useMouse, handlePointerMove, handleMotion]);
+  }, [sensorEnabled, handlePointerMove, handleMotion]);
 
   return (
     <main ref={containerRef} className="relative w-full h-screen min-h-[400px] overflow-hidden bg-[#0a0a0f]">
@@ -545,9 +536,9 @@ export default function HarmoniumApp() {
                   Load different file
                 </button>
                 <p className="text-[#444] text-xs sm:text-sm mt-2 px-4">
-                  {useMouse 
-                    ? "Center = clean • Edges = warm" 
-                    : "Flat = clean • Tilted = warm"}
+                  {sensorEnabled 
+                    ? "Touch screen or tilt phone: center = clean • edges = warm" 
+                    : "Touch screen: center = clean • edges = warm"}
                 </p>
               </>
             )}
