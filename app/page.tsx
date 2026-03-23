@@ -1,281 +1,511 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
-import { Points, PointMaterial } from "@react-three/drei";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { PointMaterial } from "@react-three/drei";
 import * as THREE from "three";
 
-function ParticleSystem({ pitch, volume, active }: { pitch: number; volume: number; active: boolean }) {
+interface ParticleProps {
+  mousePos: { x: number; y: number };
+  distanceFromCenter: number;
+}
+
+function ParticleSystem({ mousePos, distanceFromCenter }: ParticleProps) {
   const pointsRef = useRef<THREE.Points>(null);
-  const particleCount = 800;
+  const { size } = useThree();
+  const particleCount = 1500;
   
-  const [positions, velocities] = useMemo(() => {
+  
+  const [positions, velocities, phases, colors] = useMemo(() => {
     const pos = new Float32Array(particleCount * 3);
     const vel = new Float32Array(particleCount * 3);
+    const ph = new Float32Array(particleCount);
+    const col = new Float32Array(particleCount * 3);
+    const baseColor = new THREE.Color().setHSL(0.7, 0.5, 0.5);
     
     for (let i = 0; i < particleCount; i++) {
       const theta = Math.random() * Math.PI * 2;
       const phi = Math.acos(2 * Math.random() - 1);
-      const r = 1 + Math.random() * 0.5;
+      const r = 1.2 + Math.random() * 1.5;
       
       pos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
       pos[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
       pos[i * 3 + 2] = r * Math.cos(phi);
       
-      vel[i * 3] = (Math.random() - 0.5) * 0.02;
-      vel[i * 3 + 1] = (Math.random() - 0.5) * 0.02;
-      vel[i * 3 + 2] = (Math.random() - 0.5) * 0.02;
+      vel[i * 3] = 0;
+      vel[i * 3 + 1] = 0;
+      vel[i * 3 + 2] = 0;
+      
+      ph[i] = Math.random() * Math.PI * 2;
+      
+      col[i * 3] = baseColor.r;
+      col[i * 3 + 1] = baseColor.g;
+      col[i * 3 + 2] = baseColor.b;
     }
     
-    return [pos, vel];
+    return [pos, vel, ph, col];
   }, []);
 
-  useFrame((state, delta) => {
-    if (!pointsRef.current || !active) return;
+  useFrame((state) => {
+    if (!pointsRef.current) return;
     
     const posArray = pointsRef.current.geometry.attributes.position.array as Float32Array;
-    const normalizedPitch = (pitch - 110) / 770;
-    const normalizedVolume = volume / 100;
+    const colorArray = pointsRef.current.geometry.attributes.color?.array as Float32Array | undefined;
+    const baseColor = new THREE.Color().setHSL(0.7, 0.5, 0.5);
+    const time = state.clock.elapsedTime;
+    
+    const aspect = size.width / size.height;
+    const mouseX = (mousePos.x / size.width - 0.5) * 2 * aspect * 2.5;
+    const mouseY = -(mousePos.y / size.height - 0.5) * 2 * 2.5;
+    
+    const pullStrength = distanceFromCenter * 0.15;
+    const basePull = distanceFromCenter * 0.02;
     
     for (let i = 0; i < particleCount; i++) {
       const idx = i * 3;
       
-      velocities[idx] += (Math.random() - 0.5) * 0.01 * normalizedVolume;
-      velocities[idx + 1] += (Math.random() - 0.5) * 0.01 * normalizedVolume;
-      velocities[idx + 2] += (Math.random() - 0.5) * 0.01 * normalizedVolume;
+      const baseAngle = time * 0.08 + phases[i] * 0.1;
+      const origX = Math.sin(baseAngle + i * 0.002) * (1.8 + Math.sin(phases[i]) * 0.3);
+      const origY = Math.cos(baseAngle * 0.7 + i * 0.003) * (1.8 + Math.cos(phases[i]) * 0.3);
+      const origZ = Math.sin(baseAngle * 0.5 + i * 0.001) * (1.8 + Math.sin(phases[i] * 2) * 0.3);
       
-      const noise = 0.01 + normalizedPitch * 0.02;
+      const noiseX = Math.sin(time * 0.3 + i * 0.01 + phases[i]) * 0.15;
+      const noiseY = Math.cos(time * 0.25 + i * 0.015 + phases[i]) * 0.15;
+      const noiseZ = Math.sin(time * 0.35 + i * 0.012 + phases[i]) * 0.15;
+      
+      posArray[idx] = origX + noiseX;
+      posArray[idx + 1] = origY + noiseY;
+      posArray[idx + 2] = origZ + noiseZ;
+      
+      const dx = -posArray[idx];
+      const dy = -posArray[idx + 1];
+      const dz = -posArray[idx + 2];
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      
+      if (dist > 0.1) {
+        const force = basePull + (dist < 1 ? pullStrength * (1 - dist) : 0);
+        velocities[idx] += (dx / dist) * force;
+        velocities[idx + 1] += (dy / dist) * force;
+        velocities[idx + 2] += (dz / dist) * force;
+      }
       
       velocities[idx] *= 0.98;
       velocities[idx + 1] *= 0.98;
       velocities[idx + 2] *= 0.98;
       
-      posArray[idx] += velocities[idx] + Math.sin(state.clock.elapsedTime * (1 + normalizedPitch * 3) + i) * noise;
-      posArray[idx + 1] += velocities[idx + 1] + Math.cos(state.clock.elapsedTime * (1 + normalizedPitch * 3) + i) * noise;
-      posArray[idx + 2] += velocities[idx + 2] + Math.sin(state.clock.elapsedTime * 0.5 + i) * noise;
+      posArray[idx] += velocities[idx];
+      posArray[idx + 1] += velocities[idx + 1];
+      posArray[idx + 2] += velocities[idx + 2];
       
-      const dist = Math.sqrt(
-        posArray[idx] ** 2 + 
-        posArray[idx + 1] ** 2 + 
-        posArray[idx + 2] ** 2
-      );
-      
-      if (dist > 2.5) {
-        const scale = 2 / dist;
+      const maxDist = 2.5;
+      const currentDist = Math.sqrt(posArray[idx] ** 2 + posArray[idx + 1] ** 2 + posArray[idx + 2] ** 2);
+      if (currentDist > maxDist) {
+        const scale = maxDist / currentDist;
         posArray[idx] *= scale;
         posArray[idx + 1] *= scale;
         posArray[idx + 2] *= scale;
-        velocities[idx] *= -0.5;
-        velocities[idx + 1] *= -0.5;
-        velocities[idx + 2] *= -0.5;
+      }
+
+      if (colorArray) {
+        let opacity = 0.5 - (currentDist - 0.9) * 0.7;
+        opacity = Math.max(0.01, Math.min(0.5, opacity));
+        
+        colorArray[idx] = baseColor.r * opacity;
+        colorArray[idx + 1] = baseColor.g * opacity;
+        colorArray[idx + 2] = baseColor.b * opacity;
       }
     }
     
     pointsRef.current.geometry.attributes.position.needsUpdate = true;
-    pointsRef.current.rotation.y += delta * (0.1 + normalizedPitch * 0.5);
-    pointsRef.current.rotation.x += delta * 0.1;
+    if (pointsRef.current.geometry.attributes.color) {
+      pointsRef.current.geometry.attributes.color.needsUpdate = true;
+    }
   });
 
-  if (!active) return null;
-
-  const color = new THREE.Color().setHSL(0.6 + (pitch - 110) / 770 * 0.2, 0.8, 0.6);
-
   return (
-    <Points ref={pointsRef} positions={positions} stride={3} frustumCulled={false}>
+    <points ref={pointsRef as any} frustumCulled={false}>
+      <bufferGeometry>
+        <bufferAttribute
+          attach="attributes-position"
+          args={[positions, 3]}
+        />
+        <bufferAttribute
+          attach="attributes-color"
+          args={[colors, 3]}
+        />
+      </bufferGeometry>
       <PointMaterial
         transparent
-        color={color}
-        size={0.08 + (volume / 100) * 0.06}
+        vertexColors
+        size={0.04}
         sizeAttenuation={true}
         depthWrite={false}
         blending={THREE.AdditiveBlending}
-        opacity={0.6 + (volume / 100) * 0.4}
       />
-    </Points>
+    </points>
   );
 }
 
-function ParticlesCanvas({ pitch, volume, active }: { pitch: number; volume: number; active: boolean }) {
+function Blackhole({ intensity }: { intensity: number }) {
+  const accretionDiskRef = useRef<THREE.Group>(null);
+  
+  useFrame((state) => {
+    const time = state.clock.elapsedTime;
+    
+    if (accretionDiskRef.current) {
+      accretionDiskRef.current.rotation.z = time * 0.15;
+    }
+  });
+
+  const accretionColor = useMemo(() => new THREE.Color().setHSL(0.7, 0.5, 0.5), []);
+
   return (
-    <Canvas camera={{ position: [0, 0, 5], fov: 60 }} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}>
-      <color attach="background" args={['#0d0d0d']} />
-      <ambientLight intensity={0.5} />
-      <ParticleSystem pitch={pitch} volume={volume} active={active} />
+    <group>
+      <group ref={accretionDiskRef}>
+        {[0.5, 0.6, 0.7, 0.8, 0.9, 1.0].map((radius, i) => (
+          <mesh key={i} rotation={[Math.PI / 2.5, 0, i * 0.8]}>
+            <torusGeometry args={[radius, 0.015 + i * 0.003, 8, 32]} />
+            <meshBasicMaterial 
+              color={accretionColor} 
+              transparent 
+              opacity={0.5 - i * 0.07}
+              blending={THREE.AdditiveBlending}
+            />
+          </mesh>
+        ))}
+      </group>
+    </group>
+  );
+}
+
+function ParticlesCanvas({ mousePos, distanceFromCenter }: { mousePos: { x: number; y: number }; distanceFromCenter: number }) {
+  return (
+    <Canvas camera={{ position: [0, 0, 5], fov: 50 }} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}>
+      <color attach="background" args={['#0a0a0f']} />
+      <ambientLight intensity={0.3} />
+      <ParticleSystem mousePos={mousePos} distanceFromCenter={distanceFromCenter} />
+      {/* <Blackhole intensity={distanceFromCenter} />/ */}
     </Canvas>
   );
 }
 
-interface HarmoniumVoice {
-  oscillators: OscillatorNode[];
-  gains: GainNode[];
-  filter: BiquadFilterNode;
-  lfo: OscillatorNode;
-  lfoGain: GainNode;
-  fm: OscillatorNode;
-  fmGain: GainNode;
-  masterGain: GainNode;
+const DEFAULT_AUDIO = "/highs and lows.wav";
+
+function hasOrientationSupport(): boolean {
+  return typeof DeviceOrientationEvent !== "undefined" && 
+    "ontouchstart" in window;
 }
 
-function createHarmoniumVoice(ctx: AudioContext, baseFreq: number): HarmoniumVoice {
-  const masterGain = ctx.createGain();
-  masterGain.gain.value = 0;
+function isMobile(): boolean {
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+}
 
-  const filter = ctx.createBiquadFilter();
-  filter.type = "bandpass";
-  filter.frequency.value = 500;
-  filter.Q.value = 1.5;
+function makeDistortionCurve(amount: number): Float32Array {
+  const samples = 44100;
+  const curve = new Float32Array(samples);
+  const deg = Math.PI / 180;
+  for (let i = 0; i < samples; i++) {
+    const x = (i * 2) / samples - 1;
+    curve[i] = ((3 + amount) * x * 20 * deg) / (Math.PI + amount * Math.abs(x));
+  }
+  return curve;
+}
 
-  const harmonics = [1, 2, 3, 4, 5, 6];
-  const harmonicGains = [0.5, 0.15, 0.35, 0.2, 0.25, 0.1];
-  
-  const oscillators: OscillatorNode[] = [];
-  const gains: GainNode[] = [];
-  
-  harmonics.forEach((harmonic, i) => {
-    for (let j = 0; j < 3; j++) {
-      const osc = ctx.createOscillator();
-      const oscGain = ctx.createGain();
-      
-      const detune = (j - 1) * 5;
-      osc.type = "sawtooth";
-      osc.frequency.value = baseFreq * harmonic;
-      osc.detune.value = detune;
-      
-      const volume = harmonicGains[i] / 3;
-      oscGain.gain.value = volume;
-      
-      osc.connect(oscGain);
-      oscGain.connect(filter);
-      osc.start();
-      
-      oscillators.push(osc);
-      gains.push(oscGain);
-    }
-  });
-
-  const lfo = ctx.createOscillator();
-  const lfoGain = ctx.createGain();
-  lfo.type = "sine";
-  lfo.frequency.value = 6;
-  lfoGain.gain.value = 0.15;
-  lfo.connect(lfoGain);
-  lfoGain.connect(masterGain.gain);
-  lfo.start();
-
-  const fm = ctx.createOscillator();
-  const fmGain = ctx.createGain();
-  fm.type = "sine";
-  fm.frequency.value = baseFreq * 2;
-  fmGain.gain.value = 8;
-  
-  const fmGain2 = ctx.createGain();
-  fmGain2.gain.value = 0;
-  fm.connect(fmGain);
-  fmGain.connect(fmGain2);
-  fmGain2.connect(filter.frequency);
-  fm.start();
-
-  filter.connect(masterGain);
-  masterGain.connect(ctx.destination);
-
-  return {
-    oscillators,
-    gains,
-    filter,
-    lfo,
-    lfoGain,
-    fm,
-    fmGain,
-    masterGain
-  };
+function setDistortionCurve(node: WaveShaperNode, amount: number) {
+  const samples = 44100;
+  const curve = new Float32Array(samples);
+  const deg = Math.PI / 180;
+  for (let i = 0; i < samples; i++) {
+    const x = (i * 2) / samples - 1;
+    curve[i] = ((3 + amount) * x * 20 * deg) / (Math.PI + amount * Math.abs(x));
+  }
+  node.curve = curve;
+  node.oversample = "4x";
 }
 
 export default function HarmoniumApp() {
   const [isActive, setIsActive] = useState(false);
-  const [data, setData] = useState({ pitch: 0, volume: 0 });
+  const [isLoading, setIsLoading] = useState(true);
+  const [data, setData] = useState({ bright: 0, volume: 0 });
+  const [audioLoaded, setAudioLoaded] = useState(false);
+  const [useMouse, setUseMouse] = useState(false);
+  const [mousePos, setMousePos] = useState({ x: -1000, y: -1000 });
+  const [distanceFromCenter, setDistanceFromCenter] = useState(0);
+  const [brightEnabled, setBrightEnabled] = useState(true);
+  const [volumeEnabled, setVolumeEnabled] = useState(true);
+  const brightEnabledRef = useRef(true);
+  const volumeEnabledRef = useRef(true);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   
   const audioCtx = useRef<AudioContext | null>(null);
-  const voice = useRef<HarmoniumVoice | null>(null);
+  const audioCtxClosed = useRef(false);
+  const bufferRef = useRef<AudioBuffer | null>(null);
+  const sourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const masterGain = useRef<GainNode | null>(null);
+  const filterRef = useRef<BiquadFilterNode | null>(null);
+  const distortionRef = useRef<WaveShaperNode | null>(null);
+  const distortionGain = useRef<GainNode | null>(null);
+
+  useEffect(() => {
+    const loadDefaultAudio = async () => {
+      try {
+        audioCtx.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const response = await fetch(DEFAULT_AUDIO);
+        const arrayBuffer = await response.arrayBuffer();
+        bufferRef.current = await audioCtx.current.decodeAudioData(arrayBuffer);
+        setAudioLoaded(true);
+      } catch (err) {
+        console.error("Failed to load default audio:", err);
+      }
+      setIsLoading(false);
+    };
+    
+    loadDefaultAudio();
+    
+    if (!hasOrientationSupport() || isMobile()) {
+      setUseMouse(true);
+    }
+  }, []);
+
+  const handleMouseMove = useCallback((e: MouseEvent | Touch) => {
+    setMousePos({ x: e.clientX, y: e.clientY });
+  }, []);
+
+  useEffect(() => {
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches[0]) {
+        setMousePos({ x: e.touches[0].clientX, y: e.touches[0].clientY });
+      }
+    };
+    
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("touchmove", handleTouchMove);
+    
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("touchmove", handleTouchMove);
+    };
+  }, [handleMouseMove]);
+
+  const getDistanceFromCenter = useCallback((clientX: number, clientY: number) => {
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return 0;
+    
+    const centerX = rect.width / 2;
+    const centerY = rect.height / 2;
+    const maxDistance = Math.sqrt(centerX * centerX + centerY * centerY);
+    const distance = Math.sqrt(Math.pow(clientX - rect.left - centerX, 2) + Math.pow(clientY - rect.top - centerY, 2));
+    
+    return Math.min(1, distance / maxDistance);
+  }, []);
+
+  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    setIsLoading(true);
+    
+    if (!audioCtx.current || audioCtxClosed.current) {
+      audioCtx.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      audioCtxClosed.current = false;
+    }
+    
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      bufferRef.current = await audioCtx.current.decodeAudioData(arrayBuffer);
+      setAudioLoaded(true);
+    } catch (err) {
+      console.error("Failed to decode audio:", err);
+    }
+    
+    setIsLoading(false);
+  }, []);
 
   const startAudio = useCallback(async () => {
-    if (typeof (DeviceOrientationEvent as any).requestPermission === "function") {
+    if (!audioCtx.current || audioCtxClosed.current) {
+      audioCtx.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      audioCtxClosed.current = false;
+    }
+    
+    await audioCtx.current.resume();
+    
+    if (!useMouse && typeof (DeviceOrientationEvent as any).requestPermission === "function") {
       const permission = await (DeviceOrientationEvent as any).requestPermission();
       if (permission !== "granted") return;
     }
-
-    audioCtx.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-    voice.current = createHarmoniumVoice(audioCtx.current, 220);
     
-    window.addEventListener("deviceorientation", handleMotion);
-    setIsActive(true);
-  }, []);
-
-  const handleMotion = useCallback((event: DeviceOrientationEvent) => {
-    if (!voice.current || !audioCtx.current) return;
-
-    const beta = event.beta || 0;
-    const freq = Math.max(110, Math.min(880, 440 + (beta * 4)));
+    if (!bufferRef.current) return;
     
-    const harmonics = [1, 2, 3, 4, 5, 6];
-    const detuneOffsets = [-5, 0, 5];
+    masterGain.current = audioCtx.current.createGain();
+    masterGain.current.gain.value = 0;
     
-    voice.current.oscillators.forEach((osc, idx) => {
-      const harmonicIdx = Math.floor(idx / 3);
-      const detuneIdx = idx % 3;
-      const harmonic = harmonics[harmonicIdx];
-      osc.frequency.setTargetAtTime(freq * harmonic, audioCtx.current!.currentTime, 0.02);
-      osc.detune.setTargetAtTime(detuneOffsets[detuneIdx], audioCtx.current!.currentTime, 0.02);
-    });
+    filterRef.current = audioCtx.current.createBiquadFilter();
+    filterRef.current.type = "lowpass";
+    filterRef.current.frequency.value = 2000;
+    filterRef.current.Q.value = 2;
     
-    voice.current.fm.frequency.setTargetAtTime(freq * 2, audioCtx.current.currentTime, 0.02);
+    distortionRef.current = audioCtx.current.createWaveShaper();
+    setDistortionCurve(distortionRef.current, 0);
     
-    const filterFreq = 300 + (freq / 880) * 600;
-    voice.current.filter.frequency.setTargetAtTime(filterFreq, audioCtx.current.currentTime, 0.05);
-
-    const gamma = Math.abs(event.gamma || 0);
-    const vol = Math.min(1, gamma / 60);
+    distortionGain.current = audioCtx.current.createGain();
+    distortionGain.current.gain.value = 0;
     
-    voice.current.masterGain.gain.setTargetAtTime(vol * 0.3, audioCtx.current.currentTime, 0.05);
-    voice.current.lfo.frequency.setTargetAtTime(4 + vol * 8, audioCtx.current.currentTime, 0.1);
+    const source = audioCtx.current.createBufferSource();
+    source.buffer = bufferRef.current;
+    source.loop = true;
+    source.connect(filterRef.current);
+    filterRef.current.connect(distortionRef.current);
+    distortionRef.current.connect(distortionGain.current);
+    distortionGain.current.connect(masterGain.current);
+    masterGain.current.connect(audioCtx.current.destination);
+    source.start();
+    sourceRef.current = source;
     
-    setData({ pitch: Math.round(freq), volume: Math.round(vol * 100) });
-  }, []);
-
-  const stopAudio = useCallback(() => {
-    window.removeEventListener("deviceorientation", handleMotion);
-    
-    if (voice.current) {
-      voice.current.oscillators.forEach(osc => osc.stop());
-      voice.current.lfo.stop();
-      voice.current.fm.stop();
+    if (useMouse) {
+      window.addEventListener("pointermove", handlePointerMove);
+    } else {
+      window.addEventListener("deviceorientation", handleMotion);
     }
     
-    audioCtx.current?.close();
+    setData({ bright: 0, volume: 50 });
+    setIsActive(true);
+  }, [useMouse]);
+
+  const handleMotion = useCallback((event: DeviceOrientationEvent) => {
+    if (!audioCtx.current || !sourceRef.current || !masterGain.current || !filterRef.current || !distortionRef.current || !distortionGain.current) return;
+
+    const beta = event.beta || 0;
+    const gamma = event.gamma || 0;
+    
+    const betaOffset = Math.abs(beta);
+    const distance = Math.min(1, betaOffset / 90);
+    setDistanceFromCenter(distance);
+    
+    const isFlat = betaOffset < 15;
+    
+    if (isFlat) {
+      masterGain.current.gain.setTargetAtTime(0.5, audioCtx.current.currentTime, 0.05);
+      filterRef.current.frequency.setTargetAtTime(2000, audioCtx.current.currentTime, 0.05);
+      filterRef.current.Q.setTargetAtTime(2, audioCtx.current.currentTime, 0.05);
+      setDistortionCurve(distortionRef.current, 0);
+      distortionGain.current.gain.setTargetAtTime(0, audioCtx.current.currentTime, 0.05);
+      setData({ bright: 0, volume: 50 });
+      return;
+    }
+
+    const bright = distance * 100;
+    let vol = 0.5;
+    
+    if (brightEnabledRef.current) {
+      const filterFreq = 500 + bright * 20;
+      filterRef.current.frequency.setTargetAtTime(filterFreq, audioCtx.current.currentTime, 0.05);
+      filterRef.current.Q.setTargetAtTime(2 + distance * 8, audioCtx.current.currentTime, 0.05);
+    } else {
+      filterRef.current.frequency.setTargetAtTime(2000, audioCtx.current.currentTime, 0.05);
+      filterRef.current.Q.setTargetAtTime(2, audioCtx.current.currentTime, 0.05);
+    }
+    
+    if (volumeEnabledRef.current) {
+      vol = 0.2 + distance * 0.8;
+      masterGain.current.gain.setTargetAtTime(vol, audioCtx.current.currentTime, 0.05);
+    } else {
+      masterGain.current.gain.setTargetAtTime(0.5, audioCtx.current.currentTime, 0.05);
+    }
+    
+    const distortionAmount = distance * 30;
+    setDistortionCurve(distortionRef.current, distortionAmount);
+    distortionGain.current.gain.setTargetAtTime(0.3 * distance, audioCtx.current.currentTime, 0.05);
+    
+    setData({ bright: Math.round(brightEnabledRef.current ? bright : 0), volume: Math.round(vol * 100) });
+  }, []);
+
+  const handlePointerMove = useCallback((event: PointerEvent) => {
+    if (!audioCtx.current || !sourceRef.current || !masterGain.current || !filterRef.current || !distortionRef.current || !distortionGain.current) return;
+    
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    
+    const distance = getDistanceFromCenter(event.clientX, event.clientY);
+    setDistanceFromCenter(distance);
+    
+    const bright = distance * 100;
+    let vol = 0.5;
+    
+    if (brightEnabledRef.current) {
+      const filterFreq = 500 + bright * 20;
+      filterRef.current.frequency.setTargetAtTime(filterFreq, audioCtx.current.currentTime, 0.05);
+      filterRef.current.Q.setTargetAtTime(2 + distance * 8, audioCtx.current.currentTime, 0.05);
+    } else {
+      filterRef.current.frequency.setTargetAtTime(2000, audioCtx.current.currentTime, 0.05);
+      filterRef.current.Q.setTargetAtTime(2, audioCtx.current.currentTime, 0.05);
+    }
+    
+    if (volumeEnabledRef.current) {
+      vol = 0.2 + distance * 0.8;
+      masterGain.current.gain.setTargetAtTime(vol, audioCtx.current.currentTime, 0.05);
+    } else {
+      masterGain.current.gain.setTargetAtTime(0.5, audioCtx.current.currentTime, 0.05);
+    }
+    
+    const distortionAmount = distance * 30;
+    setDistortionCurve(distortionRef.current, distortionAmount);
+    distortionGain.current.gain.setTargetAtTime(0.3 * distance, audioCtx.current.currentTime, 0.05);
+    
+    setData({ bright: Math.round(brightEnabledRef.current ? bright : 0), volume: Math.round(vol * 100) });
+  }, [getDistanceFromCenter]);
+
+  const stopAudio = useCallback(() => {
+    if (useMouse) {
+      window.removeEventListener("pointermove", handlePointerMove);
+    } else {
+      window.removeEventListener("deviceorientation", handleMotion);
+    }
+    
+    if (sourceRef.current) {
+      sourceRef.current.stop();
+      sourceRef.current = null;
+    }
+    
+    if (audioCtx.current && !audioCtxClosed.current) {
+      audioCtx.current.close();
+      audioCtxClosed.current = true;
+    }
+    
     setIsActive(false);
-    setData({ pitch: 0, volume: 0 });
-  }, [handleMotion]);
+    setDistanceFromCenter(0);
+    setData({ bright: 0, volume: 0 });
+  }, [useMouse, handlePointerMove, handleMotion]);
 
   useEffect(() => {
     return () => {
-      window.removeEventListener("deviceorientation", handleMotion);
-      audioCtx.current?.close();
+      if (useMouse) {
+        window.removeEventListener("pointermove", handlePointerMove);
+      } else {
+        window.removeEventListener("deviceorientation", handleMotion);
+      }
+      if (sourceRef.current) sourceRef.current.stop();
+      if (audioCtx.current && !audioCtxClosed.current) {
+        audioCtx.current.close();
+        audioCtxClosed.current = true;
+      }
     };
-  }, [handleMotion]);
+  }, [useMouse, handlePointerMove, handleMotion]);
 
   return (
-    <main className="relative w-screen h-screen overflow-hidden">
-      <ParticlesCanvas pitch={data.pitch} volume={data.volume} active={isActive} />
+    <main ref={containerRef} className="relative w-full h-screen min-h-[400px] overflow-hidden bg-[#0a0a0f]">
+      <ParticlesCanvas mousePos={mousePos} distanceFromCenter={distanceFromCenter} />
       
-      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+      <div className="absolute inset-0 flex flex-col items-center justify-start pt-16 sm:pt-20 pointer-events-none">
         {isActive && (
-          <div className="flex gap-16">
+          <div className="flex gap-10 sm:gap-16">
             <div className="flex flex-col items-center">
-              <span className="text-6xl font-light tracking-tight text-[#e8e8e8] tabular-nums">
-                {data.pitch}
+              <span className="text-4xl sm:text-5xl font-light tracking-tight text-white/50 tabular-nums">
+                {data.bright}
               </span>
             </div>
             <div className="flex flex-col items-center">
-              <span className="text-6xl font-light tracking-tight text-[#e8e8e8] tabular-nums">
+              <span className="text-4xl sm:text-5xl font-light tracking-tight text-white/50 tabular-nums">
                 {data.volume}
               </span>
             </div>
@@ -283,23 +513,90 @@ export default function HarmoniumApp() {
         )}
       </div>
 
-      <div className="absolute bottom-12 left-0 right-0 flex justify-center">
-        {!isActive ? (
-          <button
-            onClick={startAudio}
-            className="pointer-events-auto px-10 py-4 bg-[#a8c8ff] text-[#0d0d0d] rounded-full text-lg font-medium shadow-lg hover:shadow-xl active:scale-95 transition-all"
-          >
-            Start
-          </button>
-        ) : (
+      {!isActive && (
+        <div className="absolute inset-0 flex items-center justify-center bg-[#0a0a0f]/80 px-4">
+          <div className="text-center max-w-sm w-full">
+            {!isLoading && audioLoaded && (
+              <button
+                onClick={startAudio}
+                className="pointer-events-auto px-8 sm:px-10 py-3 sm:py-4 bg-[#6b21a8] text-white rounded-full text-base sm:text-lg font-medium shadow-lg hover:shadow-xl active:scale-95 transition-all"
+              >
+                Start
+              </button>
+            )}
+            
+            {isLoading && (
+              <p className="text-[#a0a0a0] text-base sm:text-lg">Loading audio...</p>
+            )}
+            
+            {audioLoaded && (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="audio/*"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="pointer-events-auto mt-4 px-5 py-2 bg-transparent text-[#666] text-sm hover:text-[#a0a0a0] transition-all"
+                >
+                  Load different file
+                </button>
+                <p className="text-[#444] text-xs sm:text-sm mt-2 px-4">
+                  {useMouse 
+                    ? "Center = clean • Edges = warm" 
+                    : "Flat = clean • Tilted = warm"}
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {isActive && (
+        <div className="absolute bottom-6 left-0 right-0 flex flex-col items-center gap-4 px-4">
+          <div className="flex items-center gap-6 sm:gap-8">
+            <button
+              onClick={() => {
+                const newValue = !brightEnabled;
+                setBrightEnabled(newValue);
+                brightEnabledRef.current = newValue;
+              }}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                brightEnabled 
+                  ? "bg-white/20 text-white" 
+                  : "bg-white/5 text-white/40"
+              }`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full transition-all ${brightEnabled ? "bg-white" : "bg-white/30"}`} />
+              <span className="text-[10px] tracking-wider uppercase">Warm</span>
+            </button>
+            <button
+              onClick={() => {
+                const newValue = !volumeEnabled;
+                setVolumeEnabled(newValue);
+                volumeEnabledRef.current = newValue;
+              }}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                volumeEnabled 
+                  ? "bg-white/20 text-white" 
+                  : "bg-white/5 text-white/40"
+              }`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full transition-all ${volumeEnabled ? "bg-white" : "bg-white/30"}`} />
+              <span className="text-[10px] tracking-wider uppercase">Vol</span>
+            </button>
+          </div>
           <button
             onClick={stopAudio}
-            className="pointer-events-auto px-8 py-3 bg-[#1a1a1a] text-[#a0a0a0] rounded-full text-sm font-medium border border-[#242424] hover:border-[#444444] transition-all"
+            className="pointer-events-auto px-5 py-1.5 bg-white/10 text-white/60 rounded-full text-xs font-medium hover:bg-white/20 transition-all"
           >
             Stop
           </button>
-        )}
-      </div>
+        </div>
+      )}
     </main>
   );
 }
