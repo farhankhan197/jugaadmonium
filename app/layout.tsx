@@ -4,7 +4,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Ergosphere",
   icons: {
-    icon: "/favicon.ico",
+    icon: "/sound-waves.ico",
   },
   description: "Tilt to play",
 };
