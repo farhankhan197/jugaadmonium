@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Ergosphere",
-  description: "Tilt to play",
+  description: "tedha karo",
 };
 
 export const viewport: Viewport = {
